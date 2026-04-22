@@ -7,22 +7,18 @@ import {
   Info,
   X,
   ShieldCheck,
+  AlertTriangle,
 } from "lucide-react";
-import {
-  loadImage,
-  generateELA,
-  generateNoiseMap,
-} from "@/lib/imageAnalysis";
+import { analyzeImage, loadImage, type AnalysisResult } from "@/lib/imageAnalysis";
 
 type AnalysisState = {
   fileName: string;
   fileSize: number;
   fileType: string;
   originalUrl: string;
-  elaUrl: string | null;
-  noiseUrl: string | null;
   width: number;
   height: number;
+  result: AnalysisResult | null;
 };
 
 type MetadataState = {
@@ -48,6 +44,12 @@ function formatValue(v: unknown): string {
     }
   }
   return String(v);
+}
+
+function scoreVerdict(s: number): { label: string; color: string; ring: string } {
+  if (s < 25) return { label: "Likely authentic", color: "text-emerald-400", ring: "ring-emerald-500/40" };
+  if (s < 55) return { label: "Inspect carefully", color: "text-amber-400", ring: "ring-amber-500/40" };
+  return { label: "Highly suspicious", color: "text-red-400", ring: "ring-red-500/50" };
 }
 
 export default function Dashboard() {
@@ -85,18 +87,13 @@ export default function Dashboard() {
           fileSize: file.size,
           fileType: file.type,
           originalUrl: dataUrl,
-          elaUrl: null,
-          noiseUrl: null,
           width: img.naturalWidth,
           height: img.naturalHeight,
+          result: null,
         };
         setAnalysis(initial);
-
-        const [ela, noise] = await Promise.all([
-          generateELA(img),
-          generateNoiseMap(img),
-        ]);
-        setAnalysis({ ...initial, elaUrl: ela, noiseUrl: noise });
+        const result = await analyzeImage(img);
+        setAnalysis({ ...initial, result });
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Failed to analyze image";
         setError(msg);
@@ -159,6 +156,9 @@ export default function Dashboard() {
     setShowMetadata(false);
     fileRef.current = null;
   };
+
+  const result = analysis?.result;
+  const verdict = result ? scoreVerdict(result.score) : null;
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -242,6 +242,22 @@ export default function Dashboard() {
                   {formatBytes(analysis.fileSize)} · {analysis.fileType}
                 </p>
               </div>
+              {result && (
+                <div className="text-xs text-muted-foreground hidden md:flex items-center gap-4 ml-2">
+                  <span>
+                    ELA anomalies:{" "}
+                    <span className="text-foreground font-medium">
+                      {(result.anomalyRatio * 100).toFixed(2)}%
+                    </span>
+                  </span>
+                  <span>
+                    Copy-move matches:{" "}
+                    <span className="text-foreground font-medium">
+                      {result.copyMoveMatches}
+                    </span>
+                  </span>
+                </div>
+              )}
               <button
                 onClick={checkMetadata}
                 disabled={metadata.loading}
@@ -266,14 +282,41 @@ export default function Dashboard() {
               <AnalysisPanel
                 title="ELA Analysis"
                 subtitle="Error Level Analysis · highlights re-saved regions"
-                imageUrl={analysis.elaUrl}
-                loading={analysis.elaUrl === null}
+                imageUrl={result?.elaUrl ?? null}
+                loading={!result}
               />
               <AnalysisPanel
                 title="Noise Map"
                 subtitle="High-pass residual · reveals splicing & inconsistencies"
-                imageUrl={analysis.noiseUrl}
-                loading={analysis.noiseUrl === null}
+                imageUrl={result?.noiseUrl ?? null}
+                loading={!result}
+              />
+              <AnalysisPanel
+                title="Anomaly Highlighter"
+                subtitle="Red mask over regions of abnormal compression"
+                imageUrl={result?.anomalyOverlayUrl ?? null}
+                loading={!result}
+                badge={
+                  result
+                    ? `${(result.anomalyRatio * 100).toFixed(2)}% flagged`
+                    : undefined
+                }
+              />
+              <AnalysisPanel
+                title="Copy-Move Detection"
+                subtitle="Linked yellow boxes mark suspected cloned regions"
+                imageUrl={result?.copyMoveOverlayUrl ?? null}
+                loading={!result}
+                badge={
+                  result
+                    ? `${result.copyMoveMatches} match${result.copyMoveMatches === 1 ? "" : "es"}`
+                    : undefined
+                }
+                emptyHint={
+                  result && result.copyMoveMatches === 0
+                    ? "No clone-stamp patterns detected."
+                    : undefined
+                }
               />
             </div>
 
@@ -286,6 +329,31 @@ export default function Dashboard() {
           </>
         )}
       </main>
+
+      {verdict && result && (
+        <div
+          className={`fixed bottom-6 right-6 z-50 rounded-2xl border border-border bg-card/95 backdrop-blur shadow-2xl ring-2 ${verdict.ring} px-5 py-4 flex items-center gap-4`}
+        >
+          <div
+            className={`w-16 h-16 rounded-full bg-background border border-border flex items-center justify-center ${verdict.color}`}
+          >
+            <span className="text-2xl font-bold tabular-nums">
+              {result.score}
+            </span>
+          </div>
+          <div className="min-w-0">
+            <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
+              Verdict score
+            </p>
+            <p className={`text-sm font-semibold ${verdict.color}`}>
+              {verdict.label}
+            </p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">
+              0 = clean · 100 = highly suspicious
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -295,17 +363,28 @@ function AnalysisPanel({
   subtitle,
   imageUrl,
   loading,
+  badge,
+  emptyHint,
 }: {
   title: string;
   subtitle: string;
   imageUrl: string | null;
   loading: boolean;
+  badge?: string;
+  emptyHint?: string;
 }) {
   return (
     <section className="rounded-xl border border-border bg-card overflow-hidden flex flex-col">
-      <header className="px-4 py-3 border-b border-border">
-        <h2 className="text-sm font-semibold">{title}</h2>
-        <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>
+      <header className="px-4 py-3 border-b border-border flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <h2 className="text-sm font-semibold">{title}</h2>
+          <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>
+        </div>
+        {badge && (
+          <span className="shrink-0 inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-md bg-secondary text-secondary-foreground border border-border">
+            {badge}
+          </span>
+        )}
       </header>
       <div className="aspect-[4/5] bg-black/40 flex items-center justify-center relative">
         {loading || !imageUrl ? (
@@ -314,11 +393,18 @@ function AnalysisPanel({
             <span className="text-xs">Processing…</span>
           </div>
         ) : (
-          <img
-            src={imageUrl}
-            alt={title}
-            className="w-full h-full object-contain"
-          />
+          <>
+            <img
+              src={imageUrl}
+              alt={title}
+              className="w-full h-full object-contain"
+            />
+            {emptyHint && (
+              <div className="absolute bottom-2 left-2 right-2 text-[11px] text-emerald-300 bg-emerald-950/70 border border-emerald-800 rounded px-2 py-1 text-center">
+                {emptyHint}
+              </div>
+            )}
+          </>
         )}
       </div>
     </section>
@@ -356,11 +442,14 @@ function MetadataPanel({
           <p className="text-sm text-destructive">{metadata.error}</p>
         )}
         {!metadata.loading && !metadata.error && entries.length === 0 && (
-          <p className="text-sm text-muted-foreground">
-            No EXIF metadata found. This often means the file was stripped
-            (e.g. re-saved by a chat app or a screenshot tool) — a strong
-            forensic signal on its own.
-          </p>
+          <div className="flex items-start gap-2 text-sm text-amber-400">
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+            <p>
+              No EXIF metadata found. This often means the file was stripped
+              (e.g. re-saved by a chat app or a screenshot tool) — a strong
+              forensic signal on its own.
+            </p>
+          </div>
         )}
         {entries.length > 0 && (
           <div className="overflow-x-auto">
