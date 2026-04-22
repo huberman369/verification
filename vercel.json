@@ -3,7 +3,7 @@
   "framework": "vite",
   "installCommand": "pnpm install --frozen-lockfile=false",
   "buildCommand": "pnpm --filter @workspace/passport-verifier build",
-  "outputDirectory": "artifacts/passport-verifier/dist",
+  "outputDirectory": "artifacts/passport-verifier/dist/public",
   "rewrites": [
     { "source": "/(.*)", "destination": "/index.html" }
   ]
