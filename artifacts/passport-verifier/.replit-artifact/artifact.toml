@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Passport Verifier"
+version = "1.0.0"
+id = "artifacts/passport-verifier"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 22076
+
+[services.development]
+run = "pnpm --filter @workspace/passport-verifier run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/passport-verifier", "run", "build" ]
+publicDir = "artifacts/passport-verifier/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "22076"
+BASE_PATH = "/"

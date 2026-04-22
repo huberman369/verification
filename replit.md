@@ -25,3 +25,11 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - `pnpm --filter @workspace/api-server run dev` — run API server locally
 
 See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.
+
+## Artifacts
+
+- `passport-verifier` (web, `/`): Local passport verification dashboard for the iGaming verification team.
+  - Drag & drop a passport photo
+  - Three-panel view: Original, ELA (error level analysis), Noise map
+  - "Check metadata" button reads EXIF/IPTC/XMP via `exifr`
+  - All processing is client-side (canvas + `exifr`); no backend or upload
